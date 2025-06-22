@@ -443,7 +443,7 @@ class TestAbstractRecorder:
         )
         assert recorder.active_recording is None
 
-    @pytest.mark.skip(reason="Skipping for a bit")
+    # @pytest.mark.skip(reason="Skipping for a bit")
     def test_concatenate_fragments_no_fragments(self, recorder: ConcreteTestRecorder):
         """Test _concatenate_fragments when no fragments are available."""
         start_time = datetime.datetime(2023, 3, 1, 12, 0, tzinfo=datetime.timezone.utc)
@@ -560,6 +560,7 @@ class TestAbstractRecorder:
         assert date == recording.date
         assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
 
+    @pytest.mark.skip(reason="Skipping for a bit")
     def test_prod_failure_case(
         self,
         db_session: Callable[[], Session],

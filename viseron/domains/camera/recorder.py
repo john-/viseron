@@ -9,6 +9,7 @@ import shutil
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from time import sleep
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import cv2
@@ -367,6 +368,7 @@ class AbstractRecorder(ABC, RecorderBase):
         return f"{filename_pattern}.{self._camera.extension}"
 
     def _concatenate_fragments(self, recording: Recording) -> None:
+        sleep(CAMERA_SEGMENT_DURATION)  # allow segments during recording to be created
         files = recording.get_fragments(
             self.lookback,
             self._storage.get_session,
@@ -375,6 +377,9 @@ class AbstractRecorder(ABC, RecorderBase):
             Fragment(file.filename, file.path, file.duration, file.orig_ctime)
             for file in files
         ]
+        if len(fragments) == 0:
+            self._logger.info("No fragments available. Just started Viseron?")
+            return
         event_clip = self._camera.fragmenter.concatenate_fragments(fragments)
         if not event_clip:
             return
