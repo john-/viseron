@@ -11,12 +11,16 @@ import pytest
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from viseron.components.storage.models import Recordings
+from viseron.components.storage.models import Files, Recordings
+from viseron.domains.camera import AbstractCamera
 from viseron.domains.camera.recorder import (
+    AbstractRecorder,
     RecorderBase,
+    Recording,
     delete_recordings,
     get_recordings,
 )
+from viseron.watchdog.thread_watchdog import RestartableThread
 
 from tests.common import MockCamera
 
@@ -233,3 +237,399 @@ class TestRecorderBase:
             datetime.timedelta(seconds=time.localtime().tm_gmtoff)
         )
         assert result is True
+
+
+#
+# Test cases that work with segments
+#
+# Note: Segments are written to the database only after the file is fully written.
+#       As a result, concatenation of segments cannot fully happen unto the segments
+#       within the recording time period have been completed.
+#
+#       Yhese test cases are designed to test this behavior.  They do this
+#       by delaying the addition of segments so they are written after the recording
+#       is ccomplete.
+#
+
+
+class ConcreteTestRecorder(AbstractRecorder):
+    """Test recorder class that implements abstract methods."""
+
+    def __init__(self, vis: Viseron, config, camera: AbstractCamera) -> None:
+        super().__init__(vis, "test", config, camera)
+
+    def _start(self, recording, shared_frame, objects_in_fov) -> None:
+        pass
+
+    def _stop(self, recording) -> None:
+        pass
+
+    @property
+    def lookback(self) -> Literal[5]:
+        """Return lookback."""
+        return 5
+
+
+@pytest.fixture(name="session_with_recording")
+def fixture_session_with_recording(get_db_session: Callable[[], Session]):
+    """Fixture to test fragments."""
+
+    # 12:00 UTC March 2
+    base_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
+    recording_start = base_time
+    recording_end = recording_start + datetime.timedelta(seconds=6.0)
+    with get_db_session() as session:
+        session.execute(
+            insert(Recordings).values(
+                camera_identifier="test1",
+                start_time=recording_start,
+                adjusted_start_time=recording_start,
+                end_time=recording_end,
+                thumbnail_path="test",
+            )
+        )
+        session.commit()
+    yield get_db_session
+
+
+@pytest.fixture(name="db_session")
+def fixture_db_session(get_db_session: Callable[[], Session]) -> Callable[[], Session]:
+    """Fixture to provide a database session for tests."""
+
+    def _get_db_session() -> Session:
+        """Return a new database session."""
+        return get_db_session()
+
+    return _get_db_session
+
+
+@pytest.fixture(name="add_recording_to_session")
+def fixture_add_recording_to_session(
+    db_session: Callable[[], Session]
+) -> Callable[
+    [datetime.datetime, datetime.datetime, datetime.datetime, str, str], None
+]:
+    """Fixture to add a recording to the session."""
+
+    def _add_recording(
+        start_time: datetime.datetime,
+        adjusted_start_time: datetime.datetime,
+        end_time: datetime.datetime,
+        camera_identifier: str,
+        thumbnail_path: str,
+    ) -> None:
+        """Add a recording to the session."""
+        with db_session() as session:
+            session.execute(
+                insert(Recordings).values(
+                    camera_identifier=camera_identifier,
+                    start_time=start_time,
+                    adjusted_start_time=adjusted_start_time,
+                    end_time=end_time,
+                    thumbnail_path=thumbnail_path,
+                )
+            )
+            session.commit()
+
+    return _add_recording
+
+
+@pytest.fixture(name="add_segment_to_session")
+def fixture_add_segment_to_session(
+    session_with_recording: Callable[[], Session]
+) -> Callable[[datetime.datetime, float, float], None]:
+    """Fixture to add a segment to the session."""
+
+    def _add_segment(
+        segment_start: datetime.datetime, segment_duration: float, delay: float
+    ) -> None:
+        """Add a segment to the session after a delay."""
+        time.sleep(delay)
+
+        with session_with_recording() as session:
+            session.execute(
+                insert(Files).values(
+                    path="/tmp/fragment1.mp4",
+                    tier_id=1,
+                    tier_path="/tmp/tier1",
+                    camera_identifier="test1",
+                    category="recorder",
+                    subcategory="segments",
+                    duration=segment_duration,
+                    directory="/tmp",
+                    filename="fragment1.mp4",
+                    size=1024,
+                    orig_ctime=segment_start,
+                )
+            )
+            session.commit()
+
+    return _add_segment
+
+
+# to be REPLACED
+# @pytest.fixture(name="get_db_session_fragments")
+# def fixture_get_db_session_fragments(get_db_session: Callable[[], Session]):
+#     """Fixture to test fragments."""
+
+#     # *Note:* This only works if the fragments have been written first which
+# is not the case
+#     # unless the concatenation has the delay
+
+#     # this is the case where the recording is between the start and
+#     # end of the file segment
+#     # 12:00 UTC March 2
+#     base_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
+#     recording_start = base_time
+#     recording_end = recording_start + datetime.timedelta(seconds=2.0)
+#     # segment_start = recording_start - datetime.timedelta(seconds=6.0)
+#     # segment_duration = 10.0
+#     with get_db_session() as session:
+#         session.execute(
+#             insert(Recordings).values(
+#                 camera_identifier="test1",
+#                 start_time=recording_start,
+#                 adjusted_start_time=recording_start,
+#                 end_time=recording_end,
+#                 thumbnail_path="test",
+#             )
+#         )
+#         # session.execute(
+#         #     insert(Files).values(
+#         #         path="/tmp/fragment1.mp4",
+#         #         tier_id=1,
+#         #         tier_path="/tmp/tier1",
+#         #         camera_identifier="test1",
+#         #         category="recorder",
+#         #         subcategory="segments",
+#         #         duration=segment_duration,
+#         #         directory="/tmp",
+#         #         filename="fragment1.mp4",
+#         #         size=1024,
+#         #         orig_ctime=segment_start,
+#         #     )
+#         # )
+#         session.commit()
+#     yield get_db_session
+
+
+@pytest.fixture(name="recorder")
+def fixture_patched_recorder(vis: Viseron):
+    """Fixture to create a test recorder with mocked vis.add_entity."""
+    with patch.object(vis, "add_entity") as mock_add_entity:
+        config = MagicMock()
+        nested_dict = {"filename_pattern": "%H-%M-%S"}
+        config.__getitem__.return_value.__getitem__.side_effect = nested_dict.get
+        recorder = ConcreteTestRecorder(vis, config, MockCamera())
+        # pylint: disable=protected-access
+        recorder._logger = MagicMock()
+        assert mock_add_entity.call_count == 2
+
+        yield recorder
+
+
+class TestAbstractRecorder:
+    """Test the AbstractRecorder class."""
+
+    def test_no_active_recording(self, recorder: ConcreteTestRecorder):
+        """Test no active recording."""
+        recording = None
+
+        recorder.stop(recording)
+
+        # pylint: disable=protected-access
+        recorder._logger.error.assert_called_with(  # type: ignore [attr-defined]
+            "No active recording to stop"
+        )
+        assert recorder.active_recording is None
+
+    @pytest.mark.skip(reason="Skipping for a bit")
+    def test_concatenate_fragments_no_fragments(self, recorder: ConcreteTestRecorder):
+        """Test _concatenate_fragments when no fragments are available."""
+        start_time = datetime.datetime(2023, 3, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        recording = Recording(
+            id=1,
+            start_time=start_time,
+            start_timestamp=start_time.timestamp(),
+            end_time=None,
+            end_timestamp=None,
+            date="2023-03-01",
+            thumbnail=None,
+            thumbnail_path="/tmp/thumbnail.jpg",
+            clip_path=None,
+            objects=[],
+        )
+
+        # pylint: disable=protected-access
+        recorder._concatenate_fragments(recording)
+
+        # pylint: disable=protected-access
+        recorder._logger.info.assert_called_with(  # type: ignore [attr-defined]
+            "No fragments available. Just started Viseron?"
+        )
+        assert recording.clip_path is None
+
+    # @pytest.mark.skip(reason="Skipping for a bit")
+    def test_fragments_in_progress_during_recording(
+        self,
+        recorder: ConcreteTestRecorder,
+        session_with_recording: Callable[[], Session],
+        add_segment_to_session: Callable[[datetime.datetime, float, float], None],
+    ):
+        """Fragment starts before the recording and ends during it."""
+        start_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
+        recording = Recording(
+            id=1,
+            start_time=start_time,
+            start_timestamp=start_time.timestamp(),
+            end_time=None,
+            end_timestamp=None,
+            date="2023-03-02",
+            thumbnail=None,
+            thumbnail_path="/tmp/thumbnail.jpg",
+            clip_path=None,
+            objects=[],
+        )
+
+        # pylint: disable=protected-access
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as mock_file_move:
+            # Return a list of fragments from the database session
+            mock_get_session.return_value = session_with_recording()
+
+            # recorder runs concatenate_fragments in a thread
+            concat_thread = RestartableThread(
+                name="viseron.camera.test.concatenate_fragments",
+                target=recorder._concatenate_fragments,
+                args=(recording,),
+                register=False,
+            )
+            concat_thread.start()
+
+            # while concatenation is running insert a segment
+            recording_time = 6.0
+            segment_duration = 10.0
+            # simulate completing in the middle of a recording
+            go_back = segment_duration - recording_time / 2
+            segment_start = start_time - datetime.timedelta(seconds=go_back)
+            delay = segment_duration - go_back
+            add_segment_to_session(segment_start, segment_duration, delay)
+
+            concat_thread.join()
+
+            assert mock_file_move.call_count == 1
+
+        assert recording.clip_path is not None
+        (date, filename) = recording.clip_path.split("/")[-2:]
+        assert date == recording.date
+        assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
+
+    @pytest.mark.skip(reason="Skipping for a bit")
+    def test_concatenate_fragments_with_fragments(
+        self,
+        recorder: ConcreteTestRecorder,
+        get_db_session_fragments: Callable[[], Session],
+    ):
+        """Test _concatenate_fragments when fragments are available."""
+        start_time = datetime.datetime(2023, 3, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        recording = Recording(
+            id=1,
+            start_time=start_time,
+            start_timestamp=start_time.timestamp(),
+            end_time=None,
+            end_timestamp=None,
+            date="2023-03-01",
+            thumbnail=None,
+            thumbnail_path="/tmp/thumbnail.jpg",
+            clip_path=None,
+            objects=[],
+        )
+
+        # pylint: disable=protected-access
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as mock_file_move:
+            # Return a list of fragments from the database session
+            mock_get_session.return_value = get_db_session_fragments()
+            recorder._concatenate_fragments(recording)
+            assert mock_file_move.call_count == 1
+
+        assert recording.clip_path is not None
+        (date, filename) = recording.clip_path.split("/")[-2:]
+        assert date == recording.date
+        assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
+
+    def test_prod_failure_case(
+        self,
+        db_session: Callable[[], Session],
+        recorder: ConcreteTestRecorder,
+        add_recording_to_session: Callable[
+            [datetime.datetime, datetime.datetime, datetime.datetime, str, str], None
+        ],
+        add_segment_to_session: Callable[[datetime.datetime, float, float], None],
+    ):
+        """Test _concatenate_fragments with a production failure case."""
+
+        start_time = datetime.datetime.fromtimestamp(
+            1750517066.55, tz=datetime.timezone.utc
+        )
+        adjusted_start_time = datetime.datetime.fromtimestamp(
+            1750517056.55, tz=datetime.timezone.utc
+        )
+        end_time = datetime.datetime.fromtimestamp(1750517069, tz=datetime.timezone.utc)
+        camera_identifier = "test1"
+        thumbnail_path = "/tmp/thumbnail.jpg"
+        add_recording_to_session(
+            start_time, adjusted_start_time, end_time, camera_identifier, thumbnail_path
+        )
+
+        recording = Recording(
+            id=1,
+            start_time=start_time,
+            start_timestamp=start_time.timestamp(),
+            end_time=None,
+            end_timestamp=None,
+            date="2025-06-21",
+            thumbnail=None,
+            thumbnail_path=thumbnail_path,
+            clip_path=None,
+            objects=[],
+        )
+
+        # pylint: disable=protected-access
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as mock_file_move:
+            # Return a list of fragments from the database session
+            mock_get_session.return_value = db_session()
+
+            # recorder runs concatenate_fragments in a thread
+            concat_thread = RestartableThread(
+                name="viseron.camera.test.concatenate_fragments",
+                target=recorder._concatenate_fragments,
+                args=(recording,),
+                register=False,
+            )
+            concat_thread.start()
+
+            # while concatenation is running insert a segment
+            #
+            #  NEXT STEP: Update these values to productions ones in insert_log.txt
+            #
+            recording_time = 6.0
+            segment_duration = 10.0
+            # simulate completing in the middle of a recording
+            go_back = segment_duration - recording_time / 2
+            segment_start = start_time - datetime.timedelta(seconds=go_back)
+            delay = segment_duration - go_back
+            add_segment_to_session(segment_start, segment_duration, delay)
+
+            concat_thread.join()
+
+            assert mock_file_move.call_count == 1
+
+        assert recording.clip_path is not None
+        (date, filename) = recording.clip_path.split("/")[-2:]
+        assert date == recording.date
+        assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
