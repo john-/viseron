@@ -572,6 +572,10 @@ class TestAbstractRecorder:
     ):
         """Test _concatenate_fragments with a production failure case."""
 
+        #
+        # 1. Add recording to the database
+        #
+
         start_time = datetime.datetime.fromtimestamp(
             1750517066.55, tz=datetime.timezone.utc
         )
@@ -584,6 +588,10 @@ class TestAbstractRecorder:
         add_recording_to_session(
             start_time, adjusted_start_time, end_time, camera_identifier, thumbnail_path
         )
+
+        #
+        # 2. Create a recording object
+        #
 
         recording = Recording(
             id=1,
@@ -614,14 +622,14 @@ class TestAbstractRecorder:
             )
             concat_thread.start()
 
-            # while concatenation is running insert a segment
             #
-            #  NEXT STEP: Update these values to productions ones in insert_log.txt
+            #  3. While concatenation thread is running insert a segment
             #
-            recording_time = 6.0
-            segment_duration = 10.0
+
+            recording_time = end_time - start_time
+            segment_duration = 9.83
             # simulate completing in the middle of a recording
-            go_back = segment_duration - recording_time / 2
+            go_back = segment_duration - recording_time.total_seconds() / 2
             segment_start = start_time - datetime.timedelta(seconds=go_back)
             delay = segment_duration - go_back
             add_segment_to_session(segment_start, segment_duration, delay)
