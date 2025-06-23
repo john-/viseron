@@ -560,7 +560,7 @@ class TestAbstractRecorder:
         assert date == recording.date
         assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
 
-    @pytest.mark.skip(reason="Skipping for a bit")
+    # @pytest.mark.skip(reason="Skipping for a bit")
     def test_prod_failure_case(
         self,
         db_session: Callable[[], Session],
@@ -572,17 +572,21 @@ class TestAbstractRecorder:
     ):
         """Test _concatenate_fragments with a production failure case."""
 
+        # Case 1 in log.txt
+
         #
         # 1. Add recording to the database
         #
 
         start_time = datetime.datetime.fromtimestamp(
-            1750517066.55, tz=datetime.timezone.utc
+            1750711989.34, tz=datetime.timezone.utc
         )
         adjusted_start_time = datetime.datetime.fromtimestamp(
-            1750517056.55, tz=datetime.timezone.utc
+            1750711979.34, tz=datetime.timezone.utc
         )
-        end_time = datetime.datetime.fromtimestamp(1750517069, tz=datetime.timezone.utc)
+        end_time = datetime.datetime.fromtimestamp(
+            1750711992.32, tz=datetime.timezone.utc
+        )
         camera_identifier = "test1"
         thumbnail_path = "/tmp/thumbnail.jpg"
         add_recording_to_session(
@@ -599,7 +603,7 @@ class TestAbstractRecorder:
             start_timestamp=start_time.timestamp(),
             end_time=None,
             end_timestamp=None,
-            date="2025-06-21",
+            date="2025-06-23",
             thumbnail=None,
             thumbnail_path=thumbnail_path,
             clip_path=None,
@@ -627,10 +631,13 @@ class TestAbstractRecorder:
             #
 
             recording_time = end_time - start_time
-            segment_duration = 9.83
+            segment_duration = 9.13
             # simulate completing in the middle of a recording
             go_back = segment_duration - recording_time.total_seconds() / 2
-            segment_start = start_time - datetime.timedelta(seconds=go_back)
+            segment_start = datetime.datetime.fromtimestamp(
+                1750711973.00, tz=datetime.timezone.utc
+            )
+            # segment_start = start_time - datetime.timedelta(seconds=go_back)
             delay = segment_duration - go_back
             add_segment_to_session(segment_start, segment_duration, delay)
 
