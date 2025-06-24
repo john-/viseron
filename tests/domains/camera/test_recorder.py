@@ -292,20 +292,22 @@ def fixture_session_with_recording(get_db_session: Callable[[], Session]):
     yield get_db_session
 
 
-@pytest.fixture(name="db_session")
-def fixture_db_session(get_db_session: Callable[[], Session]) -> Callable[[], Session]:
-    """Fixture to provide a database session for tests."""
+# @pytest.fixture(name="db_session_no_recordings")
+# def fixture_db_session_no_recordings(
+#     get_db_session: Callable[[], Session]
+# ) -> Callable[[], Session]:
+#     """Fixture to provide a database session for tests."""
 
-    def _get_db_session() -> Session:
-        """Return a new database session."""
-        return get_db_session()
+#     def _get_db_session() -> Session:
+#         """Return a new database session."""
+#         return get_db_session()
 
-    return _get_db_session
+#     return _get_db_session
 
 
 @pytest.fixture(name="add_recording_to_session")
 def fixture_add_recording_to_session(
-    db_session: Callable[[], Session]
+    get_db_session: Callable[[], Session]
 ) -> Callable[
     [datetime.datetime, datetime.datetime, datetime.datetime, str, str], None
 ]:
@@ -319,9 +321,10 @@ def fixture_add_recording_to_session(
         thumbnail_path: str,
     ) -> None:
         """Add a recording to the session."""
-        with db_session() as session:
+        with get_db_session() as session:
             session.execute(
                 insert(Recordings).values(
+                    id=1,
                     camera_identifier=camera_identifier,
                     start_time=start_time,
                     adjusted_start_time=adjusted_start_time,
@@ -336,7 +339,7 @@ def fixture_add_recording_to_session(
 
 @pytest.fixture(name="add_segment_to_session")
 def fixture_add_segment_to_session(
-    session_with_recording: Callable[[], Session]
+    get_db_session: Callable[[], Session]
 ) -> Callable[[datetime.datetime, float, float], None]:
     """Fixture to add a segment to the session."""
 
@@ -346,7 +349,7 @@ def fixture_add_segment_to_session(
         """Add a segment to the session after a delay."""
         time.sleep(delay)
 
-        with session_with_recording() as session:
+        with get_db_session() as session:
             session.execute(
                 insert(Files).values(
                     path="/tmp/fragment1.mp4",
@@ -563,7 +566,7 @@ class TestAbstractRecorder:
     # @pytest.mark.skip(reason="Skipping for a bit")
     def test_prod_failure_case(
         self,
-        db_session: Callable[[], Session],
+        get_db_session: Callable[[], Session],
         recorder: ConcreteTestRecorder,
         add_recording_to_session: Callable[
             [datetime.datetime, datetime.datetime, datetime.datetime, str, str], None
@@ -615,7 +618,7 @@ class TestAbstractRecorder:
             "shutil.move"
         ) as mock_file_move:
             # Return a list of fragments from the database session
-            mock_get_session.return_value = db_session()
+            mock_get_session.return_value = get_db_session()
 
             # recorder runs concatenate_fragments in a thread
             concat_thread = RestartableThread(
@@ -630,15 +633,21 @@ class TestAbstractRecorder:
             #  3. While concatenation thread is running insert a segment
             #
 
-            recording_time = end_time - start_time
-            segment_duration = 9.13
+            # recording_time = end_time - start_time
+            segment_duration = 9.57
             # simulate completing in the middle of a recording
-            go_back = segment_duration - recording_time.total_seconds() / 2
             segment_start = datetime.datetime.fromtimestamp(
-                1750711973.00, tz=datetime.timezone.utc
+                1750711982.00, tz=datetime.timezone.utc
             )
             # segment_start = start_time - datetime.timedelta(seconds=go_back)
-            delay = segment_duration - go_back
+            delay = segment_duration - (
+                start_time.timestamp() - segment_start.timestamp()
+            )
+            # delay = 0
+            print(
+                f"{start_time.timestamp()} \
+                {segment_start.timestamp()} {segment_duration} {delay}"
+            )
             add_segment_to_session(segment_start, segment_duration, delay)
 
             concat_thread.join()
