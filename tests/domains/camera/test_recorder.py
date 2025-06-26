@@ -377,52 +377,6 @@ def fixture_add_segment_to_session(
     return _add_segment
 
 
-# to be REPLACED
-# @pytest.fixture(name="get_db_session_fragments")
-# def fixture_get_db_session_fragments(get_db_session: Callable[[], Session]):
-#     """Fixture to test fragments."""
-
-#     # *Note:* This only works if the fragments have been written first which
-# is not the case
-#     # unless the concatenation has the delay
-
-#     # this is the case where the recording is between the start and
-#     # end of the file segment
-#     # 12:00 UTC March 2
-#     base_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
-#     recording_start = base_time
-#     recording_end = recording_start + datetime.timedelta(seconds=2.0)
-#     # segment_start = recording_start - datetime.timedelta(seconds=6.0)
-#     # segment_duration = 10.0
-#     with get_db_session() as session:
-#         session.execute(
-#             insert(Recordings).values(
-#                 camera_identifier="test1",
-#                 start_time=recording_start,
-#                 adjusted_start_time=recording_start,
-#                 end_time=recording_end,
-#                 thumbnail_path="test",
-#             )
-#         )
-#         # session.execute(
-#         #     insert(Files).values(
-#         #         path="/tmp/fragment1.mp4",
-#         #         tier_id=1,
-#         #         tier_path="/tmp/tier1",
-#         #         camera_identifier="test1",
-#         #         category="recorder",
-#         #         subcategory="segments",
-#         #         duration=segment_duration,
-#         #         directory="/tmp",
-#         #         filename="fragment1.mp4",
-#         #         size=1024,
-#         #         orig_ctime=segment_start,
-#         #     )
-#         # )
-#         session.commit()
-#     yield get_db_session
-
-
 @pytest.fixture(name="recorder")
 def fixture_patched_recorder(vis: Viseron):
     """Fixture to create a test recorder with mocked vis.add_entity."""
@@ -494,7 +448,9 @@ class TestAbstractRecorder:
         )
 
         # pylint: disable=protected-access
-        with patch.object(recorder._storage, "get_session") as mock_get_session:
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as _:  # unassigned patch is in case of test case failure
             # Return a list of fragments from the database session
             mock_get_session.return_value = get_db_session()
 
@@ -506,24 +462,13 @@ class TestAbstractRecorder:
             )
             concat_thread.start()
 
-            segments = [
-                {
-                    "start": start_time
-                    - datetime.timedelta(seconds=16),  # includes lookback
-                    "duration": 10,
-                },
-                {
-                    "start": end_time
-                    + datetime.timedelta(seconds=1),  # 1 second past end of recording
-                    "duration": 10,
-                },
-            ]
+            duration = 10
 
-            for segment in segments:
-                print(segment)
-
-            for segment in segments:
-                add_segment_to_session(segment["start"], segment["duration"], 0)
+            # insert segment before recording+lookback and after recording
+            before_recording = start_time - datetime.timedelta(seconds=16)
+            after_recording = end_time + datetime.timedelta(seconds=1)
+            add_segment_to_session(before_recording, duration, 0)
+            add_segment_to_session(after_recording, duration, 0)
 
             concat_thread.join()
 
@@ -533,7 +478,7 @@ class TestAbstractRecorder:
             )
             assert recording.clip_path is None
 
-    @pytest.mark.skip(reason="Skipping for a bit")
+    # @pytest.mark.skip(reason="Skipping for a bit")
     def test_fragments_in_progress_during_recording(
         self,
         get_db_session: Callable[[], Session],
@@ -608,7 +553,7 @@ class TestAbstractRecorder:
         assert date == recording.date
         assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
 
-    @pytest.mark.skip(reason="Skipping for a bit")
+    # @pytest.mark.skip(reason="Skipping for a bit")
     def test_prod_failure_case(
         self,
         get_db_session: Callable[[], Session],
