@@ -378,7 +378,7 @@ class AbstractRecorder(ABC, RecorderBase):
             for file in files
         ]
         if len(fragments) == 0:
-            self._logger.info("No fragments available. Just started Viseron?")
+            self._logger.error("No fragments available.")
             return
         event_clip = self._camera.fragmenter.concatenate_fragments(fragments)
         if not event_clip:
