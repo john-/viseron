@@ -243,10 +243,10 @@ class TestRecorderBase:
 # Test cases that work with segments
 #
 # Note: Segments are written to the database only after the file is fully written.
-#       As a result, concatenation of segments cannot fully happen unto the segments
+#       As a result, concatenation of segments cannot fully happen until the segments
 #       within the recording time period have been completed.
 #
-#       Yhese test cases are designed to test this behavior.  They do this
+#       Some of these test cases are designed to test this behavior.  They do this
 #       by delaying the addition of segments so they are written after the recording
 #       is ccomplete.
 #
@@ -268,42 +268,6 @@ class ConcreteTestRecorder(AbstractRecorder):
     def lookback(self) -> Literal[5]:
         """Return lookback."""
         return 5
-
-
-# @pytest.fixture(name="session_with_recording")
-# def fixture_session_with_recording(get_db_session: Callable[[], Session]):
-#     """Fixture to test fragments."""
-
-#     # 12:00 UTC March 2
-#     base_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
-#     recording_start = base_time
-#     recording_end = recording_start + datetime.timedelta(seconds=6.0)
-#     with get_db_session() as session:
-#         session.execute(
-#             insert(Recordings).values(
-#                 id=1,
-#                 camera_identifier="test1",
-#                 start_time=recording_start,
-#                 adjusted_start_time=recording_start,
-#                 end_time=recording_end,
-#                 thumbnail_path="test",
-#             )
-#         )
-#         session.commit()
-#     yield get_db_session
-
-
-# @pytest.fixture(name="db_session_no_recordings")
-# def fixture_db_session_no_recordings(
-#     get_db_session: Callable[[], Session]
-# ) -> Callable[[], Session]:
-#     """Fixture to provide a database session for tests."""
-
-#     def _get_db_session() -> Session:
-#         """Return a new database session."""
-#         return get_db_session()
-
-#     return _get_db_session
 
 
 @pytest.fixture(name="add_recording_to_session")
@@ -553,7 +517,7 @@ class TestAbstractRecorder:
         assert date == recording.date
         assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
 
-    # @pytest.mark.skip(reason="Skipping for a bit")
+    @pytest.mark.skip(reason="Skipping for a bit")
     def test_prod_failure_case(
         self,
         get_db_session: Callable[[], Session],
@@ -648,6 +612,115 @@ class TestAbstractRecorder:
                 f"{start_time.timestamp()} \
                 {segment_start.timestamp()} {segment_duration} {delay_before_insert}"
             )
+            add_segment_to_session(segment_start, segment_duration, delay_before_insert)
+
+            concat_thread.join()
+
+            assert mock_file_move.call_count == 1
+
+        assert recording.clip_path is not None
+        (date, filename) = recording.clip_path.split("/")[-2:]
+        assert date == recording.date
+        assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
+
+    # @pytest.mark.skip(reason="Skipping for a bit")
+    def test_prod_failure_case_simplified(
+        self,
+        get_db_session: Callable[[], Session],
+        recorder: ConcreteTestRecorder,
+        add_recording_to_session: Callable[
+            [int, datetime.datetime, datetime.datetime, datetime.datetime, str, str],
+            None,
+        ],
+        add_segment_to_session: Callable[[datetime.datetime, float, float], None],
+    ):
+        """Test _concatenate_fragments with a production failure case."""
+
+        # Case 1 in log.txt
+
+        #
+        # 1. Add recording to the database
+        #
+
+        record_id = 1
+        start_time = datetime.datetime(2023, 3, 2, 12, 0, tzinfo=datetime.timezone.utc)
+        adjusted_start_time = start_time - datetime.timedelta(seconds=10)
+        end_time = start_time + datetime.timedelta(seconds=3)
+        # start_time = datetime.datetime.fromtimestamp(
+        #     1750711989.34, tz=datetime.timezone.utc
+        # )
+        # adjusted_start_time = datetime.datetime.fromtimestamp(
+        #     1750711979.34, tz=datetime.timezone.utc
+        # )
+        # end_time = datetime.datetime.fromtimestamp(
+        #     1750711992.32, tz=datetime.timezone.utc
+        # )
+        camera_identifier = "test1"
+        thumbnail_path = "/tmp/thumbnail.jpg"
+        add_recording_to_session(
+            record_id,
+            start_time,
+            adjusted_start_time,
+            end_time,
+            camera_identifier,
+            thumbnail_path,
+        )
+
+        #
+        # 2. Concantenate the segments (fragments) for this recording
+        #
+
+        recording = Recording(
+            id=record_id,
+            start_time=start_time,
+            start_timestamp=start_time.timestamp(),
+            end_time=None,
+            end_timestamp=None,
+            date="2023-03-02",
+            thumbnail=None,
+            thumbnail_path=thumbnail_path,
+            clip_path=None,
+            objects=[],
+        )
+
+        # pylint: disable=protected-access
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as mock_file_move:
+            # Return a list of fragments from the database session
+            mock_get_session.return_value = get_db_session()
+
+            # recorder runs concatenate_fragments in a thread
+            concat_thread = RestartableThread(
+                name="viseron.camera.test.concatenate_fragments",
+                target=recorder._concatenate_fragments,
+                args=(recording,),
+                register=False,
+            )
+            concat_thread.start()
+
+            #
+            #  3. While concatenation thread is running insert a segment after a delay
+            #
+
+            # segment_duration = 9.57
+            segment_duration = 10
+            segment_start = start_time - datetime.timedelta(seconds=6)
+
+            # segment_start = datetime.datetime.fromtimestamp(
+            #     1750711982.00, tz=datetime.timezone.utc
+            # )
+            # simulate completing in the middle of a recording
+            # segment_start = start_time - datetime.timedelta(seconds=go_back)
+            waiting = end_time.timestamp() - segment_start.timestamp()
+            delay_before_insert = segment_duration - (waiting)
+            #              0    delay_before_insert
+            #
+            #    SS    RS RE    SE
+            #    |              |
+            #    ------ SD ------
+            #
+            print(f"{waiting=} {segment_duration} {delay_before_insert}")
             add_segment_to_session(segment_start, segment_duration, delay_before_insert)
 
             concat_thread.join()
