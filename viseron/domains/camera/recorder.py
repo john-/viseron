@@ -368,7 +368,7 @@ class AbstractRecorder(ABC, RecorderBase):
         return f"{filename_pattern}.{self._camera.extension}"
 
     def _concatenate_fragments(self, recording: Recording) -> None:
-        sleep(CAMERA_SEGMENT_DURATION)  # allow segments during recording to be created
+        sleep(CAMERA_SEGMENT_DURATION * 2)  # include segments still being written to
         files = recording.get_fragments(
             self.lookback,
             self._storage.get_session,
