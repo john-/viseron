@@ -711,16 +711,15 @@ class TestAbstractRecorder:
             #     1750711982.00, tz=datetime.timezone.utc
             # )
             # simulate completing in the middle of a recording
-            # segment_start = start_time - datetime.timedelta(seconds=go_back)
-            waiting = end_time.timestamp() - segment_start.timestamp()
-            delay_before_insert = segment_duration - (waiting)
-            #              0    delay_before_insert
+            t0 = end_time.timestamp() - segment_start.timestamp()
+            delay_before_insert = segment_duration - t0
+            #             t0    delay_before_insert
             #
             #    SS    RS RE    SE
             #    |              |
             #    ------ SD ------
             #
-            print(f"{waiting=} {segment_duration} {delay_before_insert}")
+            print(f"{t0=} {segment_duration} {delay_before_insert}")
             add_segment_to_session(segment_start, segment_duration, delay_before_insert)
 
             concat_thread.join()
