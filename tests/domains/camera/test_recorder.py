@@ -446,8 +446,8 @@ class TestAbstractRecorder:
             ([-16, 7], None),
         ],
         ids=[
-            "recording bounded single segment",
-            "segment ends and another starts while recording",
+            "recording bounded by single segment",
+            "one segment ends and another starts while recording",
             "segments outside of recording",
         ],
     )
