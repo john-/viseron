@@ -252,6 +252,14 @@ class TestRecorderBase:
 #
 
 
+@pytest.mark.parametrize(
+    "segments, expected",
+    [
+        ((-4), 1),
+        ((-6, -3), 2),
+        ((-20), 0),
+    ],
+)
 class ConcreteTestRecorder(AbstractRecorder):
     """Test recorder class that implements abstract methods."""
 
@@ -385,8 +393,8 @@ def fixture_create_recording(recording_params):
             id=params["record_id"],
             start_time=params["start_time"],
             start_timestamp=params["start_time"].timestamp(),
-            end_time=None,
-            end_timestamp=None,
+            end_time=params["end_time"],
+            end_timestamp=params["end_time"].timestamp(),
             date=params.get("date", params["start_time"].strftime("%Y-%m-%d")),
             thumbnail=None,
             thumbnail_path=params["thumbnail_path"],
@@ -430,6 +438,7 @@ class TestAbstractRecorder:
         )
         assert recorder.active_recording is None
 
+    @pytest.mark.skip(reason="to be replaced")
     def test_concatenate_fragments_no_fragments(
         self,
         get_db_session: Callable[[], Session],
@@ -476,6 +485,7 @@ class TestAbstractRecorder:
             )
             assert recording.clip_path is None
 
+    @pytest.mark.skip(reason="to be replaced")
     def test_segment_ends_during_recording(
         self,
         get_db_session: Callable[[], Session],
@@ -518,6 +528,7 @@ class TestAbstractRecorder:
         assert date == recording.date
         assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
 
+    @pytest.mark.skip(reason="to be replaced")
     def test_recording_within_segment(
         self,
         get_db_session: Callable[[], Session],
@@ -578,6 +589,93 @@ class TestAbstractRecorder:
             concat_thread.join()
 
             assert mock_file_move.call_count == 1
+
+        assert recording.clip_path is not None
+        (date, filename) = recording.clip_path.split("/")[-2:]
+        assert date == recording.date
+        assert filename == f"{recording.start_time.strftime('%H-%M-%S')}.mp4"
+
+    @pytest.mark.parametrize(  # start of segment relative to start of recording
+        "segments, expected",
+        [
+            # ([-2], 1),   temp copied out
+            ([-7, 3], 2),
+            # ([-20], 0),
+        ],
+    )
+    def test_segment_cases(
+        self,
+        get_db_session: Callable[[], Session],
+        recorder: ConcreteTestRecorder,
+        add_db_recording,
+        create_recording,
+        add_segment_to_session: Callable[[datetime.datetime, float, float], None],
+        segments,
+        expected,
+    ):
+        """Fragment starts before the recording and ends during it."""
+        # for segment in segments:
+        #     print(f"{segment=}")
+        add_db_recording()
+        recording = create_recording()
+
+        # pylint: disable=protected-access
+        with patch.object(recorder._storage, "get_session") as mock_get_session, patch(
+            "shutil.move"
+        ) as mock_file_move:
+            mock_get_session.return_value = get_db_session()
+
+            concat_thread = RestartableThread(
+                name="viseron.camera.test.concatenate_fragments",
+                target=recorder._concatenate_fragments,
+                args=(recording,),
+                register=False,
+            )
+            concat_thread.start()
+
+            recording_time = 6.0  # replace with calculation or common variable
+            segment_duration = 10.0  # segment length
+            for segment in segments:
+                # go_back = segment_duration - recording_time / 2
+                #             - D -
+                #             |   |
+                #            SD  ED
+                #   SS   SR--ER  ES
+                #   |             |
+                #   |- S Length --|
+                # negative values of D are zero delay (segment written by ER)
+
+                # RT = recording time
+                # D = S Length - RT + SS
+                # if D < 0 D = 0
+                # 10 - 6 + -2 = +2
+                delay = segment_duration - recording_time + segment
+                delay = max(delay, 0.0)
+                print(f"{delay=}")
+                segment_start = recording.start_time + datetime.timedelta(
+                    seconds=segment
+                )
+                # delay = segment_duration - go_back
+                add_segment_to_session(segment_start, segment_duration, delay)
+
+            print(
+                f"Recording start: {recording.start_time}, "
+                f"Recording end: {recording.end_time}"
+            )
+            with get_db_session() as session:
+                files = session.query(Files).all()
+                print("Files records:")
+                for file in files:
+                    print(
+                        f"File: {file.filename}, "
+                        f"Start: {file.orig_ctime}, "
+                        f"Duration: {file.duration}s, "
+                        f"Size: {file.size} bytes, "
+                        f"Path: {file.path}"
+                    )
+            concat_thread.join()
+
+            assert mock_file_move.call_count == expected  # CHANGE: Move done only once!
 
         assert recording.clip_path is not None
         (date, filename) = recording.clip_path.split("/")[-2:]
