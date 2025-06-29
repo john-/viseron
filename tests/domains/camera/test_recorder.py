@@ -438,7 +438,7 @@ class TestAbstractRecorder:
         )
         assert recorder.active_recording is None
 
-    @pytest.mark.parametrize(  # start of segment relative to start of recording
+    @pytest.mark.parametrize(  # start of segments relative to start of recording
         "segment_offsets, expected",
         [
             ([-2], 1),
@@ -487,18 +487,11 @@ class TestAbstractRecorder:
             )
             concat_thread.start()
 
-            for offset in segment_offsets:
-                #             - D -
-                #             |   |
-                #            SD  ED
-                #   SS   SR--ER  ES
-                #   |             |
-                #   -- S Length ---
+            recording_time = (recording.end_time - recording.start_time).total_seconds()
+            segment_duration = 10.0
 
-                # RT = recording time
-                # D = S Length - RT + SS
-                recording_time = 6.0  # replace with calculation or common variable
-                segment_duration = 10.0  # segment length
+            for offset in segment_offsets:
+                # delay from end of recording to when segment should be inserted
                 delay = segment_duration - recording_time + offset
                 delay = max(delay, 0.0)
                 segment_start = recording.start_time + datetime.timedelta(
