@@ -107,13 +107,15 @@ Images inferenced by the component are resized by the underlying `ultralytics` p
 
 There is no functionality to resize the image in the `yolo` component configuration before inferencing.
 
+### Performance tips
+
+While Ultralytics models perform well on CUDA-enabled GPUs, they may underperform on CPUs. If your workflow is CPU-bound, YOLO26 is a more efficient choice.
+
+Performance can be assessed by inspecting the Viseron Entity `object_detector_fps`.
+
 ### Labels
 
 When Viseron loads the model, it will print that model's labels to the log.
-
-### Performance tips
-
-If a CUDA capable GPU is not available and you are already using a lightweight model (e.g. yolov8n.pt), consider YOLO26 which performs better on CPU.
 
 ```
 cd {location of Viseron docker-compose.yaml}
