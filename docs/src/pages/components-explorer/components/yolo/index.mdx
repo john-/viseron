@@ -7,11 +7,11 @@ import config from "./config.json";
 
 <ComponentHeader meta={ComponentMetadata} />
 
-Ultralytics YOLO supports a wide range of models, from early versions like YOLOv3 to the latest YOLO11.
+Ultralytics YOLO supports a wide range of models, from early versions like YOLOv3 to the latest YOLO26.
 
 :::warning
 
-This component has undergone limited testing. In addition to partial functional testing, only the following models have been confirmed to work: yolov5mu.pt, yolov8n, and yolo11s.pt
+This component has undergone limited testing. In addition to partial functional testing, only the following models have been confirmed to work: yolov5mu.pt, yolov8n, yolo11s.pt and yolov26n.pt.
 
 :::
 
@@ -110,6 +110,10 @@ There is no functionality to resize the image in the `yolo` component configurat
 ### Labels
 
 When Viseron loads the model, it will print that model's labels to the log.
+
+### Performance tips
+
+In the limited testing performed acceptable performance was only achieved when using a GPU.
 
 ```
 cd {location of Viseron docker-compose.yaml}
